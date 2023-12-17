@@ -3,10 +3,14 @@
 #include <string.h>
 #include <stdio.h>
 
+//#define USE_RTOS
+
+#ifdef USE_RTOS
 #include "FreeRTOS.h"
 #include "queue.h"
 #include "task.h"
 #include "semphr.h"
+#endif
 
 #include "sys/queue.h"
 #include "serial_log.h"
@@ -22,8 +26,10 @@
 
 
 /* Maximum time to wait for the mutex in a logging statement */
+#ifdef USE_RTOS
 #define MAX_MUTEX_WAIT_MS   10
 #define MAX_MUTEX_WAIT_TICKS ((MAX_MUTEX_WAIT_MS + portTICK_PERIOD_MS - 1) / portTICK_PERIOD_MS)
+#endif
 
 /* FreeRTOS mutex macros */
 #define mutex_lock(x)       while (xSemaphoreTake(x, portMAX_DELAY) != pdPASS);
@@ -60,7 +66,10 @@ static SLIST_HEAD(log_tags_head, uncached_tag_entry_) set_log_tags = SLIST_HEAD_
 static uint32_t set_log_cache_max_generation = 0;
 static uint32_t set_log_cache_entry_count = 0;
 static cached_tag_entry_t set_log_cache[TAG_CACHE_SIZE];
+
+#ifdef USE_RTOS
 static SemaphoreHandle_t set_log_lock = NULL;
+#endif
 
 /* Static functions */
 static inline bool get_cached_log_level(const char* tag, serial_log_level_t* level);
@@ -73,18 +82,22 @@ static inline void clear_log_level_list();
 
 void serial_log_level_set(const char *tag, serial_log_level_t level)
 {
+#ifdef USE_RTOS
     if (!set_log_lock)
     {
         set_log_lock = xSemaphoreCreateMutex();
     }
     xSemaphoreTake(set_log_lock, portMAX_DELAY);
+#endif
 
     /* For wildcard tag, remove all linked list item and clear the cache */
     if (strcmp(tag, "*") == 0)
     {
         set_log_default_level = level;
         clear_log_level_list();
+#ifdef USE_RTOS
         xSemaphoreGive(set_log_lock);
+#endif
         return;
     }
 
@@ -108,7 +121,9 @@ void serial_log_level_set(const char *tag, serial_log_level_t level)
         uncached_tag_entry_t *new_entry = (uncached_tag_entry_t*)malloc(entry_size);
         if (!new_entry)
         {
+#ifdef USE_RTOS
             xSemaphoreGive(set_log_lock);
+#endif
             return;
         }
         new_entry->level = (uint8_t)level;
@@ -125,7 +140,9 @@ void serial_log_level_set(const char *tag, serial_log_level_t level)
             break;
         }
     }
+#ifdef USE_RTOS
     xSemaphoreGive(set_log_lock);
+#endif
 }
 
 static void clear_log_level_list(void)
@@ -143,6 +160,7 @@ static void clear_log_level_list(void)
 
 void serial_log_write(serial_log_level_t level, const char* tag, const char* format, ...)
 {
+#ifdef USE_RTOS
     if (!set_log_lock)
     {
         set_log_lock = xSemaphoreCreateMutex();
@@ -152,6 +170,7 @@ void serial_log_write(serial_log_level_t level, const char* tag, const char* for
     {
         return;
     }
+#endif
 
     /* Look or the tag in cache first, then in the linked va_list of all tags */
     serial_log_level_t level_for_tag;
@@ -163,8 +182,9 @@ void serial_log_write(serial_log_level_t level, const char* tag, const char* for
         }
         add_to_cache(tag, level_for_tag);
     }
-
+#ifdef USE_RTOS
     xSemaphoreGive(set_log_lock);
+#endif
     if (!should_output(level, level_for_tag))
     {
         return;
